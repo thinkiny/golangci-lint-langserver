@@ -8,7 +8,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
-var defaultSeverity = "Warn"
+var defaultSeverity = "Err"
 
 func main() {
 	debug := flag.Bool("debug", false, "output debug log")

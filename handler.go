@@ -7,16 +7,53 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/sourcegraph/jsonrpc2"
 )
+
+var lint_v1_commands = []string{"golangci-lint", "run", "--out-format", "json", "--issues-exit-code=1"}
+var lint_v2_commands = []string{"golangci-lint", "run", "--output.json.path", "stdout", "--issues-exit-code=1", "--show-stats=false"}
+
+func getGolangciLintMajorVersion() (int, error) {
+	cmd := exec.Command("golangci-lint", "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute golangci-lint --version: %w", err)
+	}
+
+	outputStr := strings.TrimSpace(string(output))
+	re := regexp.MustCompile(`version\s+(\d+)(?:\.\d+)*`)
+	matches := re.FindStringSubmatch(outputStr)
+	if len(matches) < 2 {
+		return 0, fmt.Errorf("could not parse version from output: %s", outputStr)
+	}
+
+	// Extract the major version (first captured group)
+	majorVersionStr := matches[1]
+	majorVersion, err := strconv.Atoi(majorVersionStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to convert major version to integer: %w", err)
+	}
+	return majorVersion, nil
+}
+
+func getGolangciLintRunCommand() []string {
+	ver, _ := getGolangciLintMajorVersion()
+	if ver == 1 {
+		return lint_v1_commands
+	}
+	return lint_v2_commands
+}
 
 func NewHandler(logger logger, noLinterName bool) jsonrpc2.Handler {
 	handler := &langHandler{
 		logger:       logger,
 		request:      make(chan DocumentURI),
 		noLinterName: noLinterName,
+		command:      getGolangciLintRunCommand(),
 	}
 	go handler.linter()
 
@@ -102,7 +139,7 @@ func (h *langHandler) lint(uri DocumentURI) ([]Diagnostic, error) {
 
 	var result GolangCILintResult
 	if err := json.Unmarshal(b, &result); err != nil {
-		return h.errToDiagnostics(err), nil
+		return []Diagnostic{{Severity: DSError, Message: string(b)}}, nil
 	}
 
 	h.logger.DebugJSON("golangci-lint-langserver: result:", result)
@@ -134,11 +171,13 @@ func (h *langHandler) lint(uri DocumentURI) ([]Diagnostic, error) {
 }
 
 func (h *langHandler) diagnosticMessage(issue *Issue) string {
-	if h.noLinterName {
-		return issue.Text
-	}
+	// if h.noLinterName {
+	//	return issue.Text
+	// }
 
-	return fmt.Sprintf("%s: %s", issue.FromLinter, issue.Text)
+	// retur ississue.Text
+	// return fmt.Sprintf("%s: %s", issue.FromLinter, issue.Text)
+	return issue.Text
 }
 
 func (h *langHandler) linter() {
@@ -201,7 +240,10 @@ func (h *langHandler) handleInitialize(_ context.Context, conn *jsonrpc2.Conn, r
 	h.rootURI = params.RootURI
 	h.rootDir = uriToPath(params.RootURI)
 	h.conn = conn
-	h.command = params.InitializationOptions.Command
+	command := params.InitializationOptions.Command
+	if len(command) > 0 {
+		h.command = command
+	}
 
 	return InitializeResult{
 		Capabilities: ServerCapabilities{
